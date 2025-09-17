@@ -5,5 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "eyed3>=0.9.8",
+    "google-api-python-client>=2.181.0",
+    "mutagen>=1.47.0",
+    "openai>=1.107.3",
+    "pillow>=11.3.0",
+    "pprintpp>=0.4.0",
+    "pydantic>=2.11.9",
+    "python-dotenv>=1.1.1",
+    "spotipy>=2.25.1",
     "yt-dlp>=2025.9.5",
 ]
