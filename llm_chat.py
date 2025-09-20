@@ -3,7 +3,9 @@ llm_chat.py
 Module for LLM chat completion using OpenAI SDK with OpenRouter as the model provider.
 """
 
+import json
 import os
+import asyncio
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union, Type, TypeVar
@@ -18,13 +20,12 @@ class YouTubeSearchQuery(BaseModel):
 class VideoSelection(BaseModel):
     """Model for video selection response."""
     index: int = Field(..., description="Index of the selected video from the search results", ge=0)
-    reason: str = Field(..., description="Explanation for why this video was selected")
 
 # You should set your OpenRouter API key as an environment variable: OPENROUTER_API_KEY
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-LLM_MODEL = "deepseek/deepseek-chat-v3.1:free"
+LLM_MODEL = "openai/gpt-oss-120b"
 
 if not OPENROUTER_API_KEY:
     raise EnvironmentError("OPENROUTER_API_KEY environment variable not set.")
@@ -37,48 +38,35 @@ client = OpenAI(
 # Type variable for Pydantic models
 T = TypeVar('T', bound=BaseModel)
 
-def chat_completion(messages: List[Dict[str, str]], response_model: Optional[Type[T]] = None) -> Union[str, T]:
+async def chat_completion(messages: List[Dict[str, str]], response_model: Optional[Type[T]]) -> T:
     """
-    Get a chat completion from the LLM using OpenRouter as the provider.
+    Async: Get a chat completion from the LLM using OpenRouter as the provider.
     Args:
         messages (list): List of message dicts, e.g. [{"role": "user", "content": "Hello!"}]
         response_model (BaseModel, optional): Pydantic model for structured response
     Returns:
         str or BaseModel: The assistant's reply as string or parsed structured model
     """
-    if response_model:
-        # Use structured output with JSON schema
-        response = client.chat.completions.create(
+    try:
+        # Use structured output with JSON object
+        response = client.chat.completions.parse(
             model=LLM_MODEL,
             messages=messages,  # type: ignore
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_model.__name__,
-                    "schema": response_model.model_json_schema(),
-                    "strict": True
-                }
-            }
+            response_format=VideoSelection
         )
-        # Parse and validate the response with Pydantic
-        content = response.choices[0].message.content
-        if content is None:
-            raise ValueError("No content in LLM response")
-        return response_model.model_validate_json(content)
-    else:
-        # Regular chat completion
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=messages  # type: ignore
-        )
-        content = response.choices[0].message.content
-        if content is None:
-            raise ValueError("No content in LLM response")
-        return content
+    except Exception as e:
+        raise ValueError(f"LLM response parsing failed: {e}")
+    # Parse and validate the response with Pydantic
+    content = response.choices[0].message.parsed
+    if content is None:
+        raise ValueError("No content in LLM response")
+    return content
+
+
     
-def generate_youtube_search_query(song_metadata):
+async def generate_youtube_search_query(song_metadata):
     """
-    Given song metadata, generate a YouTube search query that is likely to find the song alone (not music videos with extra scenes/dialog).
+    Async: Given song metadata, generate a YouTube search query that is likely to find the song alone (not music videos with extra scenes/dialog).
     Args:
         song_metadata (dict): Should include keys like 'title', 'artist', 'album', 'year', etc.
     Returns:
@@ -95,14 +83,14 @@ def generate_youtube_search_query(song_metadata):
         {"role": "user", "content": prompt}
     ]
     
-    result = chat_completion(messages, response_model=YouTubeSearchQuery)
+    result = await chat_completion(messages, response_model=YouTubeSearchQuery)
     if isinstance(result, YouTubeSearchQuery):
         return result.query
     return ""
 
-def select_best_youtube_video(song_metadata, search_results):
+async def select_best_youtube_video(song_metadata, search_results):
     """
-    Given song metadata and a list of YouTube search results, select the best video that matches the song.
+    Async: Given song metadata and a list of YouTube search results, select the best video that matches the song.
     Args:
         song_metadata (dict): Song info (title, artist, etc.)
         search_results (list): List of dicts, each with video metadata (title, channel, duration, etc.)
@@ -111,9 +99,16 @@ def select_best_youtube_video(song_metadata, search_results):
     """
     prompt = (
         "Given the following song metadata and YouTube search results, select the video that is most likely to be the correct song (not a music video with extra scenes/dialog, but the song itself). "
-        "Return the index of the best match and a short explanation.\n"
+        "Return only the index of the best match.\n"
         f"Song metadata: {song_metadata}\n"
-        f"Search results: {search_results}\n"
+        "Search results:\n" +
+        "\n".join([
+            f"{idx}: Title: {result.get('title', 'N/A')}\n"
+            f"   Channel: {result.get('channelTitle', 'N/A')}\n"
+            f"   Published: {result.get('publishedAt', 'N/A')}\n"
+            f"   Description: {result.get('description', 'N/A')[:100]}...\n"
+            for idx, result in enumerate(search_results)
+        ])
     )
     messages = [
         {"role": "system", "content": "You are an expert at matching songs to YouTube videos."},
@@ -121,20 +116,26 @@ def select_best_youtube_video(song_metadata, search_results):
     ]
     
     try:
-        result = chat_completion(messages, response_model=VideoSelection)
+        result = await chat_completion(messages, response_model=VideoSelection)
         if isinstance(result, VideoSelection) and 0 <= result.index < len(search_results):
-            return {"video": search_results[result.index], "reason": result.reason}
+            return {"video": search_results[result.index]}
         else:
-            return {"video": None, "reason": f"LLM returned invalid index {result.index}. Must be between 0 and {len(search_results)-1}."}
+            return {"video": None, "error": f"LLM returned invalid index {getattr(result, 'index', None)}. Must be between 0 and {len(search_results)-1}."}
     except Exception as e:
-        return {"video": None, "reason": f"Failed to get valid selection from LLM: {e}"}
+        return {"video": None, "error": f"Failed to get valid selection from LLM: {e}"}
 
 
 if __name__ == "__main__":
-    # Example usage
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello, who won the world series in 2020?"}
-    ]
-    reply = chat_completion(messages)
-    print("Assistant:", reply)
+    # Example async usage
+    async def main():
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello, who won the world series in 2020?"}
+        ]
+        reply = await chat_completion(messages)
+        print("Assistant:", reply)
+
+    asyncio.run(main())
+
+
+ # 'ConnectionError: {"object":"error","message":"[{\'type\': \'literal_error\', \'loc\': (\'body\', \'response_format\', \'type\'), \'msg\': \\"Input should be \'text\', \'json\', \'json_object\' or \'structural_tag\'\\", \'input\': \'json_schema\', \'ctx\': {\'expected\': \\"\'text\', \'json\', \'json_object\' or \'structural_tag\'\\"}}]","type":"BadRequestError","param":null,"code":400}'

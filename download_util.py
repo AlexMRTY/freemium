@@ -175,7 +175,7 @@ def get_available_formats(url: str) -> None:
         print(f"Error listing formats: {str(e)}")
 
 
-def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_only: bool = False) -> dict:
+def download_single_video(url: str, output_path: str, file_name: str, thread_id: int = 0, audio_only: bool = False) -> dict:
     """
     Download a single YouTube video, playlist, or channel.
 
@@ -188,6 +188,9 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
     Returns:
         dict: Result status with success/failure info
     """
+    # Ensure output directory exists
+    os.makedirs(output_path, exist_ok=True)
+
     if audio_only:
         # Configure for audio-only MP3 downloads
         format_selector = 'bestaudio/best'
@@ -243,21 +246,20 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
     if thread_id == 1:  # Only print for first thread to avoid spam
         print(f"🔍 [Debug] URL analysis: {content_type.title()}")
 
+    # Always use file_name for the downloaded file (ignore yt-dlp's default naming)
+    # For playlists/channels, still use file_name for each item (may overwrite if not unique)
     if content_type == 'playlist':
         ydl_opts['outtmpl'] = os.path.join(
-            output_path, '%(playlist_title)s', f'%(playlist_index)s-%(title)s.{file_extension}')
-        print(
-            f"📋 [Thread {thread_id}] Detected playlist URL. Downloading entire playlist...")
+            output_path, '%(playlist_title)s', file_name)
+        print(f"📋 [Thread {thread_id}] Detected playlist URL. Downloading entire playlist...")
     elif content_type == 'channel':
         ydl_opts['outtmpl'] = os.path.join(
-            output_path, '%(uploader)s', f'%(upload_date)s-%(title)s.{file_extension}')
-        print(
-            f"📺 [Thread {thread_id}] Detected channel URL. Downloading entire channel...")
+            output_path, '%(uploader)s', file_name)
+        print(f"📺 [Thread {thread_id}] Detected channel URL. Downloading entire channel...")
     else:  # single video
         ydl_opts['outtmpl'] = os.path.join(
-            output_path, f'%(title)s.{file_extension}')
-        print(
-            f"🎥 [Thread {thread_id}] Detected single video URL. Downloading {'audio' if audio_only else 'video'}...")
+            output_path, file_name)
+        print(f"🎥 [Thread {thread_id}] Detected single video URL. Downloading {'audio' if audio_only else 'video'}...")
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
@@ -275,8 +277,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
             if info.get('_type') == 'playlist':
                 title = info.get('title', 'Unknown Playlist')
                 video_count = len(info.get('entries', []))
-                print(
-                    f"📋 [Thread {thread_id}] {content_type.title()}: '{title}' ({video_count} videos)")
+                print(f"📋 [Thread {thread_id}] {content_type.title()}: '{title}' ({video_count} videos)")
 
                 # Ensure we have entries to download
                 if video_count == 0:

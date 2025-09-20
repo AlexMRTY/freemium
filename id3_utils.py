@@ -11,6 +11,16 @@ class AudioFile:
         self.path = Path(path)
         self.audio = ID3(self.path)
 
+    def modify_metadata(self, metadata: SpotifyTrack):
+        self.modify_name(metadata.name)
+        self.modify_track_artists([artist.name for artist in metadata.artists])
+        self.modify_album_artists([artist.name for artist in metadata.album.artists])
+        self.modify_album_name(metadata.album.name)
+        self.modify_length(metadata.durationMs)
+        if metadata.album.imageUrl:
+            self.modify_art(metadata.album.imageUrl)
+        self.save()
+
     def fetch_image(self, imgUrl: str):
         response = requests.get(imgUrl)
         if response.status_code != 200:
@@ -69,21 +79,18 @@ class AudioFile:
 if __name__ == "__main__":
     mp3_file_path = "downloads/echo-of-my-shadow.mp3"
     audio = AudioFile(mp3_file_path)
+    from spotify_api import Artist, Album, SpotifyTrack
     metadata = SpotifyTrack(
         id="3GZ2pTgY1nXb8p0vl6j2e",
         name="Echo of My Shadow",
-        trackArtists=["AURORA"],
-        albumArtists=["AURORA"],
-        albumName="Echo of My Shadow - Single",
-        durationMs=215000,
-        albumImageUrl="https://i.scdn.co/image/ab67616d0000b27338e85c163e5acd47e2b5e461"
+        artists=[Artist(id="1", name="AURORA")],
+        album=Album(
+            id="10",
+            name="Echo of My Shadow - Single",
+            artists=[Artist(id="1", name="AURORA")],
+            imageUrl="https://i.scdn.co/image/ab67616d0000b27338e85c163e5acd47e2b5e461"
+        ),
+        durationMs=215000
     )
 
-    audio.modify_name(metadata.name)
-    audio.modify_track_artists(metadata.trackArtists)
-    audio.modify_album_artists(metadata.albumArtists)
-    audio.modify_album_name(metadata.albumName)
-    audio.modify_length(metadata.durationMs)
-    if metadata.albumImageUrl:
-        audio.modify_art(metadata.albumImageUrl)
-    audio.save()
+    audio.modify_metadata(metadata)
